@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Easy Collimator</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body, html { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: system-ui, -apple-system, sans-serif; }
+    
+    #stage {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      cursor: pointer;
+    }
+
+    video {
+      width: 100vw;
+      height: 100vh;
+      object-fit: contain;
+      transform-origin: center center;
+      transition: transform 0.1s ease-out;
+    }
+
+    #overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    /* Interfaz Flotante (Auto-hide a los 5 segundos) */
+    .ui-container {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+    }
+
+    .ui-container.visible {
+      opacity: 1;
+    }
+
+    .ui-container.visible * {
+      pointer-events: auto;
+    }
+
+    /* Botonera lateral flotante derecha */
+    .side-controls {
+      position: absolute;
+      right: 20px;
+      top: 50%;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .icon-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: rgba(30, 30, 30, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    }
+
+    .icon-btn:hover {
+      background: rgba(50, 50, 50, 0.9);
+      border-color: rgba(255, 255, 255, 0.5);
+    }
+
+    .icon-btn.inactive {
+      opacity: 0.35;
+      filter: grayscale(80%);
+    }
+
+    .circle-icon {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      fill: none;
+      stroke-width: 2.5;
+    }
+
+    .icon-yellow { stroke: #d4e157; }
+    .icon-green { stroke: #22c55e; }
+    .icon-blue { stroke: #3b82f6; }
+
+    .cross-icon {
+      font-weight: 800;
+      font-size: 20px;
+      color: #ef4444;
+      line-height: 1;
+      user-select: none;
+    }
+
+    /* Barra inferior (Selector de Cámara + Zoom) */
+    .bottom-bar {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      max-width: 95vw;
+    }
+
+    .zoom-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(20, 20, 20, 0.75);
+      padding: 6px 14px;
+      border-radius: 30px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    }
+
+    .zoom-btn {
+      background: transparent;
+      border: none;
+      color: #ffffff;
+      font-size: 15px;
+      font-weight: bold;
+      padding: 6px 12px;
+      cursor: pointer;
+      border-radius: 16px;
+      transition: background 0.2s;
+    }
+
+    .zoom-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .zoom-text {
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 700;
+      min-width: 48px;
+      text-align: center;
+      user-select: none;
+    }
+
+    select#camSelect {
+      background: rgba(20, 20, 20, 0.75);
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      padding: 8px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      backdrop-filter: blur(8px);
+      outline: none;
+      cursor: pointer;
+      max-width: 200px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    }
+
+    select#camSelect option {
+      background: #111111;
+      color: #ffffff;
+    }
+
+    #error-msg {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #f87171;
+      background: rgba(0, 0, 0, 0.9);
+      padding: 20px;
+      border-radius: 12px;
+      text-align: center;
+      max-width: 85%;
+      display: none;
+      z-index: 30;
+      line-height: 1.5;
+      font-size: 14px;
+      border: 1px solid rgba(248, 113, 113, 0.4);
+    }
+  </style>
+</head>
+<body>
+
+  <div id="stage">
+    <video id="webcam" autoplay playsinline muted></video>
+
+    <!-- Overlay SVG: Cruz Diagonal "X" y 3 Círculos Concéntricos -->
+    <svg id="overlay" viewBox="0 0 1000 1000" preserveAspectRatio="xMidYMid meet">
+      <g id="crossGroup" style="display: none;">
+        <line x1="150" y1="150" x2="850" y2="850" stroke="#ef4444" stroke-width="2.5" opacity="0.9"/>
+        <line x1="850" y1="150" x2="150" y2="850" stroke="#ef4444" stroke-width="2.5" opacity="0.9"/>
+      </g>
+
+      <g id="circlesGroup">
+        <circle id="circleInner" cx="500" cy="500" r="120" fill="none" stroke="#3b82f6" stroke-width="3" opacity="0.95" style="display: none;"/>
+        <circle id="circleMiddle" cx="500" cy="500" r="230" fill="none" stroke="#22c55e" stroke-width="3" opacity="0.95" style="display: none;"/>
+        <circle id="circleOuter" cx="500" cy="500" r="370" fill="none" stroke="#d4e157" stroke-width="3" opacity="0.95" style="display: block;"/>
+      </g>
+    </svg>
+  </div>
+
+  <!-- Interfaz de Usuario flotante (Auto-hide) -->
+  <div id="uiContainer" class="ui-container visible">
+    
+    <!-- Botonera lateral derecha -->
+    <div class="side-controls">
+      <button class="icon-btn" id="btnToggleOuter" title="Anillo Exterior (Amarillo)">
+        <svg class="circle-icon icon-yellow" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>
+      </button>
+      <button class="icon-btn inactive" id="btnToggleMiddle" title="Anillo Medio (Verde)">
+        <svg class="circle-icon icon-green" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>
+      </button>
+      <button class="icon-btn inactive" id="btnToggleInner" title="Anillo Interior (Azul)">
+        <svg class="circle-icon icon-blue" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>
+      </button>
+      <button class="icon-btn inactive" id="btnToggleCross" title="Cruz Diagonal (X)">
+        <span class="cross-icon">✕</span>
+      </button>
+    </div>
+
+    <!-- Barra inferior con Selector de Cámara y Zoom -->
+    <div class="bottom-bar">
+      <select id="camSelect" title="Seleccionar Cámara"></select>
+
+      <div class="zoom-bar">
+        <button class="zoom-btn" id="btnZoomOut">🔍 −</button>
+        <span class="zoom-text" id="zoomVal">100%</span>
+        <button class="zoom-btn" id="btnZoomIn">🔍 +</button>
+      </div>
+    </div>
+
+  </div>
+
+  <div id="error-msg"></div>
+
+  <script>
+    const stage = document.getElementById('stage');
+    const video = document.getElementById('webcam');
+    const errorMsg = document.getElementById('error-msg');
+    const uiContainer = document.getElementById('uiContainer');
+    
+    // SVG Overlay
+    const crossGroup = document.getElementById('crossGroup');
+    const circleInner = document.getElementById('circleInner');
+    const circleMiddle = document.getElementById('circleMiddle');
+    const circleOuter = document.getElementById('circleOuter');
+
+    // Botones
+    const btnToggleOuter = document.getElementById('btnToggleOuter');
+    const btnToggleMiddle = document.getElementById('btnToggleMiddle');
+    const btnToggleInner = document.getElementById('btnToggleInner');
+    const btnToggleCross = document.getElementById('btnToggleCross');
+    const btnZoomOut = document.getElementById('btnZoomOut');
+    const btnZoomIn = document.getElementById('btnZoomIn');
+    const zoomVal = document.getElementById('zoomVal');
+    const camSelect = document.getElementById('camSelect');
+
+    // Estado inicial: solo el anillo grande amarillo
+    let showOuter = true;
+    let showMiddle = false;
+    let showInner = false;
+    let showCross = false;
+    let zoomLevel = 1.0;
+
+    let hideTimeout = null;
+    let currentStream = null;
+    let selectedDeviceId = null;
+
+    // Temporizador para ocultar controles a los 5s
+    function resetHideTimer() {
+      uiContainer.classList.add('visible');
+      if (hideTimeout) clearTimeout(hideTimeout);
+      hideTimeout = setTimeout(() => {
+        uiContainer.classList.remove('visible');
+      }, 5000);
+    }
+
+    // Toggles de elementos visuales
+    btnToggleOuter.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showOuter = !showOuter;
+      circleOuter.style.display = showOuter ? 'block' : 'none';
+      btnToggleOuter.classList.toggle('inactive', !showOuter);
+      resetHideTimer();
+    });
+
+    btnToggleMiddle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showMiddle = !showMiddle;
+      circleMiddle.style.display = showMiddle ? 'block' : 'none';
+      btnToggleMiddle.classList.toggle('inactive', !showMiddle);
+      resetHideTimer();
+    });
+
+    btnToggleInner.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showInner = !showInner;
+      circleInner.style.display = showInner ? 'block' : 'none';
+      btnToggleInner.classList.toggle('inactive', !showInner);
+      resetHideTimer();
+    });
+
+    btnToggleCross.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showCross = !showCross;
+      crossGroup.style.display = showCross ? 'block' : 'none';
+      btnToggleCross.classList.toggle('inactive', !showCross);
+      resetHideTimer();
+    });
+
+    // Control de Zoom
+    function updateZoom() {
+      video.style.transform = `scale(${zoomLevel})`;
+      zoomVal.textContent = `${Math.round(zoomLevel * 100)}%`;
+    }
+
+    btnZoomIn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      zoomLevel = Math.min(zoomLevel + 0.1, 4.0);
+      updateZoom();
+      resetHideTimer();
+    });
+
+    btnZoomOut.addEventListener('click', (e) => {
+      e.stopPropagation();
+      zoomLevel = Math.max(zoomLevel - 0.1, 1.0);
+      updateZoom();
+      resetHideTimer();
+    });
+
+    // Eventos del Selector de Cámara
+    camSelect.addEventListener('click', (e) => e.stopPropagation());
+    camSelect.addEventListener('change', (e) => {
+      e.stopPropagation();
+      selectedDeviceId = e.target.value;
+      initCamera(selectedDeviceId);
+      resetHideTimer();
+    });
+
+    function stopStream() {
+      if (currentStream) {
+        currentStream.getTracks().forEach(t => t.stop());
+        currentStream = null;
+      }
+    }
+
+    function showError(msg) {
+      errorMsg.innerHTML = msg;
+      errorMsg.style.display = 'block';
+    }
+
+    async function updateCameraList() {
+      if (!navigator.mediaDevices?.enumerateDevices) return;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+        camSelect.innerHTML = '';
+        const seen = new Set();
+
+        if (videoDevices.length > 0) {
+          videoDevices.forEach((device, index) => {
+            let label = device.label || `Cámara ${index + 1}`;
+            if (seen.has(label)) return;
+            seen.add(label);
+
+            const opt = document.createElement('option');
+            opt.value = device.deviceId;
+            opt.text = label;
+            if (device.deviceId === selectedDeviceId) opt.selected = true;
+            camSelect.appendChild(opt);
+          });
+          camSelect.style.display = 'block';
+        } else {
+          camSelect.style.display = 'none';
+        }
+      } catch (err) {
+        console.error("Error al enumerar dispositivos:", err);
+      }
+    }
+
+    async function initCamera(deviceId = null) {
+      stopStream();
+      errorMsg.style.display = 'none';
+
+      // Verificación de API mediaDevices (Requiere HTTPS o localhost)
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showError("<strong>Acceso a cámara bloqueado</strong><br><br>Los navegadores requieren un entorno seguro para usar la cámara.<br>Por favor, sirve este HTML desde un servidor local (ej. <code>http://localhost</code>) o HTTPS.");
+        return;
+      }
+
+      const constraints = deviceId 
+        ? { video: { deviceId: { exact: deviceId } } }
+        : { video: { facingMode: { ideal: 'environment' } } };
+
+      try {
+        currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = currentStream;
+        await video.play();
+
+        const track = currentStream.getVideoTracks()[0];
+        if (track) selectedDeviceId = track.getSettings().deviceId || deviceId;
+
+        await updateCameraList();
+      } catch (err) {
+        try {
+          currentStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          video.srcObject = currentStream;
+          await video.play();
+
+          const track = currentStream.getVideoTracks()[0];
+          if (track) selectedDeviceId = track.getSettings().deviceId;
+
+          await updateCameraList();
+        } catch (e) {
+          showError("<strong>Error de Cámara:</strong><br>" + e.message + "<br><br>Haz clic en la pantalla para reintentar.");
+        }
+      }
+    }
+
+    if (navigator.mediaDevices?.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', updateCameraList);
+    }
+
+    // Interacción táctil o clic para mostrar controles o reiniciar cámara
+    stage.addEventListener('click', () => {
+      resetHideTimer();
+      if (!currentStream || !video.srcObject || video.paused) {
+        initCamera(selectedDeviceId);
+      }
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        initCamera(selectedDeviceId);
+      } else {
+        stopStream();
+      }
+    });
+
+    // Arranque
+    resetHideTimer();
+    initCamera();
+  </script>
+</body>
+</html>
