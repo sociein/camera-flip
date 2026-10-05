@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body, html { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: sans-serif; }
+    
+    video {
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      transition: transform 0.2s ease;
+    }
+
+    .controls {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 12px;
+      z-index: 10;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.4s ease, visibility 0.4s ease;
+      max-width: 90vw;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .controls.visible {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    button, select {
+      background: rgba(0, 0, 0, 0.65);
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      padding: 12px 18px;
+      border-radius: 24px;
+      font-size: 14px;
+      font-weight: 600;
+      backdrop-filter: blur(8px);
+      cursor: pointer;
+      user-select: none;
+      outline: none;
+      transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    button.active {
+      background: rgba(37, 99, 235, 0.85);
+      border-color: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 0 12px rgba(37, 99, 235, 0.6);
+    }
+
+    button:active {
+      transform: scale(0.96);
+    }
+
+    select {
+      display: none; /* Se muestra por JS solo si hay > 1 cámara */
+      max-width: 220px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    select option {
+      background: #111111;
+      color: #ffffff;
+    }
+
+    #error-msg {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: #ff6b6b;
+      background: rgba(0, 0, 0, 0.85);
+      padding: 20px;
+      border-radius: 12px;
+      text-align: center;
+      width: 85%;
+      max-width: 400px;
+      font-size: 14px;
+      line-height: 1.5;
+      display: none;
+      z-index: 20;
+    }
+  </style>
+</head>
+<body>
+  <video id="webcam" autoplay playsinline muted></video>
+  
+  <div id="error-msg"></div>
+
+  <div class="controls" id="controls">
+    <button id="btnH">↔ Horizontal</button>
+    <button id="btnV">↕ Vertical</button>
+    <select id="camSelect"></select>
+  </div>
+
+  <script>
+    const video = document.getElementById('webcam');
+    const controls = document.getElementById('controls');
+    const errorMsg = document.getElementById('error-msg');
+    const btnH = document.getElementById('btnH');
+    const btnV = document.getElementById('btnV');
+    const camSelect = document.getElementById('camSelect');
+
+    let flipH = false;
+    let flipV = false;
+    let hideTimeout = null;
+    let currentStream = null;
+    let selectedDeviceId = null;
+
+    function showError(msg) {
+      errorMsg.innerHTML = msg;
+      errorMsg.style.display = 'block';
+    }
+
+    function clearError() {
+      errorMsg.style.display = 'none';
+    }
+
+    function updateTransform() {
+      const scaleX = flipH ? -1 : 1;
+      const scaleY = flipV ? -1 : 1;
+      video.style.transform = `scale(${scaleX}, ${scaleY})`;
+    }
+
+    btnH.addEventListener('click', (e) => {
+      e.stopPropagation();
+      flipH = !flipH;
+      btnH.classList.toggle('active', flipH);
+      updateTransform();
+      resetHideTimer();
+    });
+
+    btnV.addEventListener('click', (e) => {
+      e.stopPropagation();
+      flipV = !flipV;
+      btnV.classList.toggle('active', flipV);
+      updateTransform();
+      resetHideTimer();
+    });
+
+    camSelect.addEventListener('click', (e) => {
+      e.stopPropagation();
+      resetHideTimer();
+    });
+
+    camSelect.addEventListener('change', (e) => {
+      e.stopPropagation();
+      selectedDeviceId = e.target.value;
+      initCam(selectedDeviceId);
+      resetHideTimer();
+    });
+
+    function resetHideTimer() {
+      controls.classList.add('visible');
+      if (hideTimeout) clearTimeout(hideTimeout);
+      hideTimeout = setTimeout(() => {
+        controls.classList.remove('visible');
+      }, 5000);
+    }
+
+    function stopCurrentStream() {
+      if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop());
+        currentStream = null;
+      }
+    }
+
+    // Listar y poblar el selector de cámaras disponibles
+    async function updateCameraList() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+        camSelect.innerHTML = '';
+
+        if (videoDevices.length > 1) {
+          videoDevices.forEach((device, index) => {
+            const option = document.createElement('option');
+            option.value = device.deviceId;
+            option.text = device.label || `Cámara ${index + 1}`;
+            camSelect.appendChild(option);
+          });
+
+          camSelect.style.display = 'block';
+
+          // Seleccionar la cámara que está activa actualmente
+          if (selectedDeviceId) {
+            camSelect.value = selectedDeviceId;
+          }
+        } else {
+          camSelect.style.display = 'none';
+        }
+      } catch (err) {
+        console.error("Error al enumerar cámaras:", err);
+      }
+    }
+
+    async function initCam(deviceId = null) {
+      stopCurrentStream();
+      clearError();
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showError("<strong>Error de seguridad:</strong> Abre la página usando HTTPS o un servidor local.");
+        return;
+      }
+
+      // Configurar petición según si hay un ID específico seleccionado o no
+      const constraints = deviceId
+        ? { video: { deviceId: { exact: deviceId } } }
+        : { video: { facingMode: { ideal: "environment" } } };
+
+      try {
+        currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = currentStream;
+        await video.play();
+
+        // Obtener el deviceId activo si veníamos de un modo por defecto
+        const track = currentStream.getVideoTracks()[0];
+        if (track) {
+          const settings = track.getSettings();
+          selectedDeviceId = settings.deviceId || deviceId;
+        }
+
+        // Una vez concedido el permiso, leemos los nombres reales de las cámaras
+        await updateCameraList();
+
+      } catch (err1) {
+        try {
+          // Fallback a cualquier cámara si falla la búsqueda estricta
+          currentStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          video.srcObject = currentStream;
+          await video.play();
+
+          await updateCameraList();
+        } catch (err2) {
+          showError("<strong>Cámara no disponible:</strong><br>" + err2.message + "<br><br>Toca la pantalla para reintentar.");
+        }
+      }
+    }
+
+    document.addEventListener('click', () => {
+      resetHideTimer();
+      if (!currentStream || !video.srcObject || video.paused) {
+        initCam(selectedDeviceId);
+      }
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        initCam(selectedDeviceId);
+      } else {
+        stopCurrentStream();
+      }
+    });
+
+    initCam();
+  </script>
+</body>
+</html>
